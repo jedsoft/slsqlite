@@ -1,0 +1,8 @@
+Changes since 0.5.0
+1. Fixed uninitialized variable (John E. Davis)
+Changes since 0.4.0
+1. Some code cleanup (John. E. Davis)
+2. Added object-oriented interface (John E. Davis)
+3. Added support for prepared statements
+4. Removed underscores from exception class names
+5. Added some support for unsigned integers and long long integers
