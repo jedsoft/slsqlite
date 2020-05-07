@@ -216,34 +216,45 @@ static SLang_MMT_Type *allocate_statement_type (sqlite3_stmt *ppStmt)
 
 /*}}}*/
 
-static void do_sqlite_fetch(sqlite3_stmt *ppStmt)
+static int do_sqlite_fetch(sqlite3_stmt *ppStmt)
 {
-   int i;
-   SLang_BString_Type *bstr;
-   for (i = 0; i < sqlite3_data_count (ppStmt); i++)
+   int i, imax;
+
+   imax = sqlite3_data_count (ppStmt);
+   for (i = 0; i < imax; i++)
      {
+	SLang_BString_Type *bstr;
+	int status;
+
 	switch (sqlite3_column_type(ppStmt, i))
 	  {
 	   case SQLITE_INTEGER:
-	     SLang_push_integer(sqlite3_column_int(ppStmt, i));
+	     /* FIXME: SQLite integers are signed 64-bit values */
+	     status = SLang_push_integer(sqlite3_column_int(ppStmt, i));
 	     break;
 	   case SQLITE_FLOAT:
-	     SLang_push_double(sqlite3_column_double(ppStmt, i));
+	     status = SLang_push_double(sqlite3_column_double(ppStmt, i));
 	     break;
 	   case SQLITE_TEXT:
-	     SLang_push_string((char *)sqlite3_column_text(ppStmt, i));
+	     status = SLang_push_string((char *)sqlite3_column_text(ppStmt, i));
 	     break;
 	   case SQLITE_BLOB:
 	     bstr = SLbstring_create((unsigned char *)sqlite3_column_blob(ppStmt, i),
 				     sqlite3_column_bytes(ppStmt, i));
-	     if (bstr != NULL)
-	       (void) SLang_push_bstring(bstr);
+	     if (bstr == NULL)
+	       status = -1;
+	     else if (bstr != NULL)
+	       status = SLang_push_bstring(bstr);
 	     SLbstring_free(bstr);
 	     break;
 	   case SQLITE_NULL:
-	     SLang_push_null();
+	     status = SLang_push_null();
 	  }
+
+	if (status == -1)
+	  return -1;
      }
+   return 0;
 }
 
 static int do_sqlite_step(sqlite3 *db, sqlite3_stmt *ppStmt)
@@ -252,7 +263,9 @@ static int do_sqlite_step(sqlite3 *db, sqlite3_stmt *ppStmt)
    res = sqlite3_step(ppStmt);
    if (res == SQLITE_ROW)
      {
-	do_sqlite_fetch(ppStmt);
+	if (-1 == do_sqlite_fetch(ppStmt))
+	  return -1;
+
 	return 1;
      }
    if (res != SQLITE_DONE)
