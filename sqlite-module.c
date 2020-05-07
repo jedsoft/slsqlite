@@ -52,6 +52,7 @@ typedef struct
 } Statement_Type;
 
 #define DUMMY_STATEMENT_TYPE 254
+
 /*}}}*/
 /*{{{ exceptions */
 static int  Sqlite_Error = 0;
@@ -212,6 +213,23 @@ static SLang_MMT_Type *allocate_statement_type (sqlite3_stmt *ppStmt)
 	return NULL;
      }
    return mmt;
+}
+
+static Statement_Type *pop_statement (SLang_MMT_Type **mmtp)
+{
+   Statement_Type *p;
+   SLang_MMT_Type *mmt;
+
+   if ((NULL == (mmt = SLang_pop_mmt (Statement_Type_Id)))
+       || (NULL == (p = (Statement_Type *)SLang_object_from_mmt (mmt))))
+     {
+	SLang_free_mmt (mmt);	       /* NULL ok */
+	*mmtp = NULL;
+	return NULL;
+     }
+
+   *mmtp = mmt;
+   return p;
 }
 
 /*}}}*/
@@ -895,15 +913,10 @@ static void slsqlite_bind_params (void)
 
    SLreverse_stack(nargs);
 
-   if (NULL == (mmt = SLang_pop_mmt (Statement_Type_Id)))
-     {
-	SLang_free_mmt (mmt);
-	return;
-     }
+   if (NULL == (p = pop_statement (&mmt)))
+     return;
 
    nargs--;
-
-   p = (Statement_Type *)SLang_object_from_mmt (mmt);
 
    /*
     * This is necessary because the documentation for sqlite_bind_* says
@@ -947,16 +960,18 @@ static void slsqlite_bind_param (void)
 	return;
      }
 
-   SLreverse_stack(nargs);
+   if (-1 == SLreverse_stack(nargs))
+     return;
 
-   if (NULL == (mmt = SLang_pop_mmt (Statement_Type_Id))
-       || (SLang_pop_int (&n)))
+   if (NULL == (p = pop_statement (&mmt)))
+     return;
+
+   if (-1 == SLang_pop_int (&n))
      {
 	SLang_free_mmt (mmt);
 	return;
      }
 
-   p = (Statement_Type *)SLang_object_from_mmt (mmt);
    if (p->state != SQLITE_OK)
      {
 	SLang_verror (Sqlite_Error, "prepared statement is in wrong state (%d)", p->state);
@@ -975,13 +990,9 @@ static int slsqlite_bind_parameter_index (const char *name)
    SLang_MMT_Type *mmt;
    int res = 0;
 
-   if (NULL == (mmt = SLang_pop_mmt (Statement_Type_Id)))
-     {
-	SLang_free_mmt (mmt);
-	return 0;
-     }
+   if (NULL == (p = pop_statement (&mmt)))
+     return -1;
 
-   p = (Statement_Type *)SLang_object_from_mmt (mmt);
    res = sqlite3_bind_parameter_index (p->ppStmt, name);
    SLang_free_mmt(mmt);
    return res;
@@ -993,13 +1004,9 @@ static int slsqlite_step (void)
    SLang_MMT_Type *mmt;
    int res = 0;
 
-   if (NULL == (mmt = SLang_pop_mmt (Statement_Type_Id)))
-     {
-	SLang_free_mmt (mmt);
-	return 0;
-     }
+   if (NULL == (p = pop_statement (&mmt)))
+     return -1;
 
-   p = (Statement_Type *)SLang_object_from_mmt (mmt);
    if (p->state != SQLITE_OK && p->state != SQLITE_ROW)
      {
 	/*
@@ -1019,12 +1026,9 @@ static void slsqlite_fetch(void)
    Statement_Type *p;
    SLang_MMT_Type *mmt;
 
-   if (NULL == (mmt = SLang_pop_mmt (Statement_Type_Id)))
-     {
-	SLang_free_mmt (mmt);
-	return;
-     }
-   p = (Statement_Type *)SLang_object_from_mmt (mmt);
+   if (NULL == (p = pop_statement (&mmt)))
+     return;
+
    if (p->state != SQLITE_ROW)
      {
 	SLang_verror (Sqlite_Error, "prepared statement is in wrong state (%d)", p->state);
@@ -1038,13 +1042,11 @@ static void slsqlite_reset(void)
    Statement_Type *p;
    SLang_MMT_Type *mmt;
 
-   if (NULL == (mmt = SLang_pop_mmt (Statement_Type_Id)))
-     {
-	SLang_free_mmt (mmt);
-	return;
-     }
-   p = (Statement_Type *)SLang_object_from_mmt (mmt);
+   if (NULL == (p = pop_statement (&mmt)))
+     return;
+
    p->state = sqlite3_reset(p->ppStmt);
+
    SLang_free_mmt(mmt);
 }
 
