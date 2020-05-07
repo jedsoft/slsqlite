@@ -180,7 +180,7 @@ static SLang_MMT_Type *allocate_db_type (sqlite3 *db)
 /*}}}*/
 /*{{{ statement type */
 
-static void free_Statement_Type (Statement_Type *pt)
+static void free_statement_type (Statement_Type *pt)
 {
    if (pt->ppStmt != NULL)
      sqlite3_finalize(pt->ppStmt);
@@ -190,7 +190,7 @@ static void free_Statement_Type (Statement_Type *pt)
 static void destroy_statement (SLtype type, VOID_STAR f)
 {
    (void) type;
-   free_Statement_Type ((Statement_Type *) f);
+   free_statement_type ((Statement_Type *) f);
 }
 
 static SLang_MMT_Type *allocate_statement_type (sqlite3_stmt *ppStmt)
@@ -208,7 +208,7 @@ static SLang_MMT_Type *allocate_statement_type (sqlite3_stmt *ppStmt)
 
    if (NULL == (mmt = SLang_create_mmt (Statement_Type_Id, (VOID_STAR) pt)))
      {
-	free_Statement_Type (pt);
+	free_statement_type (pt);
 	return NULL;
      }
    return mmt;
@@ -216,7 +216,7 @@ static SLang_MMT_Type *allocate_statement_type (sqlite3_stmt *ppStmt)
 
 /*}}}*/
 
-static void sqlite_fetch(sqlite3_stmt *ppStmt)
+static void do_sqlite_fetch(sqlite3_stmt *ppStmt)
 {
    int i;
    SLang_BString_Type *bstr;
@@ -246,13 +246,13 @@ static void sqlite_fetch(sqlite3_stmt *ppStmt)
      }
 }
 
-static int sqlite_step(sqlite3 *db, sqlite3_stmt *ppStmt)
+static int do_sqlite_step(sqlite3 *db, sqlite3_stmt *ppStmt)
 {
    int res;
    res = sqlite3_step(ppStmt);
    if (res == SQLITE_ROW)
      {
-	sqlite_fetch(ppStmt);
+	do_sqlite_fetch(ppStmt);
 	return 1;
      }
    if (res != SQLITE_DONE)
@@ -269,7 +269,7 @@ static void slstring_destructor (void *p)
  * Bind parameters with positions i .. num.
  * Usually, either i = 1 or i = num
  */
-static int sqlite_bind(sqlite3 *db, sqlite3_stmt *ppStmt, int num, int i)
+static int do_sqlite_bind(sqlite3 *db, sqlite3_stmt *ppStmt, int num, int i)
 {
    char *svalue;
    SLang_BString_Type *bvalue;
@@ -476,13 +476,13 @@ static void slsqlite_get_row(void)
 	goto free_return;
      }
 
-   if (sqlite_bind(p->db, ppStmt, nargs - 2, 1))
+   if (do_sqlite_bind(p->db, ppStmt, nargs - 2, 1))
      {
 	sqlite3_finalize(ppStmt);
 	goto free_return;
      }
 
-   if (-1 == sqlite_step(p->db, ppStmt))
+   if (-1 == do_sqlite_step(p->db, ppStmt))
      SLang_verror (Sqlite_Error, "Query returned no result");
 
    check_error(p->db, sqlite3_finalize (ppStmt));
@@ -767,7 +767,7 @@ static void slsqlite_get_array(void)
 	goto free_return;
      }
 
-   if (sqlite_bind(p->db, ppStmt, nargs - 2, 1))
+   if (do_sqlite_bind(p->db, ppStmt, nargs - 2, 1))
      {
 	sqlite3_finalize(ppStmt);
 	goto free_return;
@@ -832,7 +832,7 @@ static void slsqlite_exec(void)
 	goto free_return;
      }
 
-   if (sqlite_bind(p->db, ppStmt, nargs - 2, 1))
+   if (do_sqlite_bind(p->db, ppStmt, nargs - 2, 1))
      {
 	sqlite3_finalize(ppStmt);
 	goto free_return;
@@ -907,7 +907,7 @@ static void slsqlite_bind_params (void)
      }
 
    db = sqlite3_db_handle(p->ppStmt);
-   sqlite_bind(db, p->ppStmt, nargs, 1);
+   do_sqlite_bind(db, p->ppStmt, nargs, 1);
 free_return:
    SLang_free_mmt(mmt);
 }
@@ -951,7 +951,7 @@ static void slsqlite_bind_param (void)
      }
 
    db = sqlite3_db_handle(p->ppStmt);
-   sqlite_bind(db, p->ppStmt, n, n);
+   do_sqlite_bind(db, p->ppStmt, n, n);
 free_return:
    SLang_free_mmt(mmt);
 }
@@ -1016,7 +1016,7 @@ static void slsqlite_fetch(void)
      {
 	SLang_verror (Sqlite_Error, "prepared statement is in wrong state (%d)", p->state);
      }
-   sqlite_fetch(p->ppStmt);
+   do_sqlite_fetch(p->ppStmt);
    SLang_free_mmt(mmt);
 }
 
@@ -1143,7 +1143,7 @@ static SLang_Foreach_Context_Type *cl_foreach_open (SLtype type, unsigned int nu
    if (check_error(c->p->db, sqlite3_prepare_v2(c->p->db, s, -1, &c->ppStmt, NULL)))
      goto free_return;
 
-   if (sqlite_bind(c->p->db, c->ppStmt, num - 1, 1))
+   if (do_sqlite_bind(c->p->db, c->ppStmt, num - 1, 1))
      {
 	sqlite3_finalize(c->ppStmt);
 	goto free_return;
@@ -1173,7 +1173,7 @@ static int cl_foreach (SLtype type, SLang_Foreach_Context_Type *c)
 
    if (c == NULL)
      return -1;
-   return sqlite_step(c->p->db, c->ppStmt);
+   return do_sqlite_step(c->p->db, c->ppStmt);
 }
 
 /*}}}*/
