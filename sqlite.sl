@@ -1,9 +1,17 @@
 import ("sqlite");
-private define get_args (n)
+
+private define get_db_and_args (n)
 {
-   variable args = __pop_args (n-1);
+   variable args = __pop_list (n-1);
    variable db = ();
    return db.db, args;
+}
+
+private define get_stmt_and_args (n)
+{
+   variable args = __pop_list (n-1);
+   variable s = ();
+   return s.stmt, args;
 }
 
 private define get_table (db, name)
@@ -13,26 +21,30 @@ private define get_table (db, name)
 
 private define get_row ()
 {
-   variable db, args; (db, args) = get_args (_NARGS);
-   return sqlite_get_row (db, __push_args (args));
+   variable db, args; (db, args) = get_db_and_args (_NARGS);
+   return sqlite_get_row (db, __push_list (args));
 }
 
 private define get_array ()
 {
-   variable db, args; (db, args) = get_args (_NARGS);
-   return sqlite_get_array (db, __push_args (args));
+   variable db, args; (db, args) = get_db_and_args (_NARGS);
+   return sqlite_get_array (db, __push_list (args));
 }
 
 private define exec ()
 {
-   variable db, args; (db, args) = get_args (_NARGS);
-   return sqlite_exec (db, __push_args (args));
+   variable db, args; (db, args) = get_db_and_args (_NARGS);
+   variable st = list_pop (args);
+   if (typeof (st) == Struct_Type)
+     st = st.stmt;
+   % This function calls: bind + step
+   sqlite_exec (db, st, __push_list (args));
 }
 
 private define changes ()
 {
-   variable db, args; (db, args) = get_args (_NARGS);
-   return sqlite_changes (db, __push_args (args));
+   variable db, args; (db, args) = get_db_and_args (_NARGS);
+   return sqlite_changes (db, __push_list (args));
 }
 
 private define reset (stmt)
@@ -42,27 +54,27 @@ private define reset (stmt)
 
 private define bind_params ()
 {
-   variable args = __pop_args (_NARGS-1);
-   variable stmt = ();
-   sqlite_bind_params (stmt.stmt, __push_args (args));
+   variable stmt, args;
+   (stmt, args) = get_stmt_and_args (_NARGS);
+   sqlite_bind_params (stmt, __push_list (args));
    variable options = __qualifiers();
    if (options != NULL)
      {
 	variable name;
 	foreach name (get_struct_field_names(options))
 	  {
-	     variable index = sqlite_bind_parameter_index(stmt.stmt, ":" + name);
+	     variable index = sqlite_bind_parameter_index(stmt, ":" + name);
 	     ifnot (index) continue;
-	     sqlite_bind_param (stmt.stmt, index, get_struct_field (options, name));
+	     sqlite_bind_param (stmt, index, get_struct_field (options, name));
 	  }
      }
 }
-   
+
 private define step ()
 {
-   variable args = __pop_args (_NARGS-1);
-   variable stmt = ();
-   return sqlite_step (stmt.stmt, __push_args (args));
+   variable stmt, args;
+   (stmt, args) = get_stmt_and_args (_NARGS);
+   return sqlite_step (stmt, __push_list (args));
 }
 
 private define fetch (stmt)
@@ -73,12 +85,12 @@ private define fetch (stmt)
 private define prepare ()
 {
    variable db, args;
-   args = __pop_args (_NARGS-1);
+   args = __pop_list (_NARGS-1);
    db = ();
-   variable stmt = sqlite_prepare (db.db, __push_args (args));
+   variable stmt = sqlite_prepare (db.db, __push_list (args));
    if (stmt == NULL) return NULL;
    variable s = struct
-     {	
+     {
 	% S-Lang frees struct fields in the order they're listed in, so list
 	% the stmt field before the db field
 	stmt = stmt,

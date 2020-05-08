@@ -126,7 +126,10 @@ static int check_error (sqlite3 *db, int error_code)
 {
    const Sqlite_Exception_Table_Type *b;
    int error;
-   if (error_code == SQLITE_OK || error_code == SQLITE_DONE || error_code == SQLITE_ROW) return 0;
+
+   if (error_code == SQLITE_OK || error_code == SQLITE_DONE || error_code == SQLITE_ROW)
+     return 0;
+
    b = Sqlite_Exception_Table;
 
    while (b->errcode_ptr != NULL)
@@ -168,15 +171,33 @@ static SLang_MMT_Type *allocate_db_type (sqlite3 *db)
      return NULL;
    memset ((char *) pt, 0, sizeof (db_type));
 
-   pt->db = db;
-
    if (NULL == (mmt = SLang_create_mmt (DB_Type_Id, (VOID_STAR) pt)))
      {
-	free_db_type (pt);
+	SLfree ((char *)pt);
 	return NULL;
      }
+
+   pt->db = db;
    return mmt;
 }
+
+static db_type *pop_db (SLang_MMT_Type **mmtp)
+{
+   db_type *p;
+   SLang_MMT_Type *mmt;
+
+   if ((NULL == (mmt = SLang_pop_mmt (DB_Type_Id)))
+       || (NULL == (p = (db_type *)SLang_object_from_mmt (mmt))))
+     {
+	SLang_free_mmt (mmt);	       /* NULL ok */
+	*mmtp = NULL;
+	return NULL;
+     }
+
+   *mmtp = mmt;
+   return p;
+}
+
 
 /*}}}*/
 /*{{{ statement type */
@@ -194,25 +215,42 @@ static void destroy_statement (SLtype type, VOID_STAR f)
    free_statement_type ((Statement_Type *) f);
 }
 
-static SLang_MMT_Type *allocate_statement_type (sqlite3_stmt *ppStmt)
+static Statement_Type *
+prepare_statement (sqlite3 *db, const char *sql,
+		   SLang_MMT_Type **mmtp)
 {
-   Statement_Type *pt;
+   Statement_Type *st;
    SLang_MMT_Type *mmt;
+   sqlite3_stmt *ppStmt;
 
-   pt = (Statement_Type *) SLmalloc (sizeof (Statement_Type));
-   if (pt == NULL)
+   *mmtp = NULL;
+
+   /* First create the Statement_Type object with a NULL statement,
+    * then prepare the statement and add it to the object.
+    */
+
+   st = (Statement_Type *) SLmalloc (sizeof (Statement_Type));
+   if (st == NULL)
      return NULL;
-   memset ((char *) pt, 0, sizeof (Statement_Type));
 
-   pt->ppStmt = ppStmt;
-   pt->state  = SQLITE_OK;
+   memset ((char *) st, 0, sizeof (Statement_Type));
 
-   if (NULL == (mmt = SLang_create_mmt (Statement_Type_Id, (VOID_STAR) pt)))
+   if (NULL == (mmt = SLang_create_mmt (Statement_Type_Id, (VOID_STAR) st)))
      {
-	free_statement_type (pt);
+	SLfree ((char *)st);
 	return NULL;
      }
-   return mmt;
+
+   if (check_error(db, sqlite3_prepare_v2(db, sql, -1, &ppStmt, NULL)))
+     {
+	SLang_free_mmt (mmt);
+	return NULL;
+     }
+
+   st->state  = SQLITE_OK;
+   st->ppStmt = ppStmt;
+   *mmtp = mmt;
+   return st;
 }
 
 static Statement_Type *pop_statement (SLang_MMT_Type **mmtp)
@@ -231,6 +269,52 @@ static Statement_Type *pop_statement (SLang_MMT_Type **mmtp)
    *mmtp = mmt;
    return p;
 }
+
+/* (..., char*|Statement_Type, db_type)
+ * The db_type is at the top of the stack
+ */
+static db_type *pop_db_and_statement (Statement_Type **stp,
+				      SLang_MMT_Type **db_mmtp,
+				      SLang_MMT_Type **st_mmtp)
+{
+   SLang_MMT_Type *db_mmt, *st_mmt;
+   db_type *db;
+   Statement_Type *st;
+
+   *db_mmtp = NULL;
+   *st_mmtp = NULL;
+   *stp = NULL;
+
+   if (NULL == (db = pop_db (&db_mmt)))
+     return NULL;
+
+   if (Statement_Type_Id == SLang_peek_at_stack ())
+     st = pop_statement (&st_mmt);
+   else
+     {
+	char *sql;
+
+	if (-1 == SLang_pop_slstring (&sql))
+	  return NULL;
+
+	st = prepare_statement (db->db, sql, &st_mmt);
+
+	SLang_free_slstring (sql);
+     }
+
+   if (st == NULL)
+     {
+	SLang_free_mmt (db_mmt);
+	return NULL;
+     }
+
+   *st_mmtp = st_mmt;
+   *db_mmtp = db_mmt;
+   *stp = st;
+
+   return db;
+}
+
 
 /*}}}*/
 
@@ -389,33 +473,18 @@ static void slsqlite_open(char *name)
 static void slsqlite_prepare (const char *sql)
 {
    db_type *p;
-   SLang_MMT_Type *mmt, *mmt2;
-   sqlite3_stmt *ppStmt;
-   if (NULL == (mmt = SLang_pop_mmt (DB_Type_Id)))
-     {
-	SLang_free_mmt (mmt);
-	(void) SLang_push_null();
-	return;
-     }
-   p = (db_type *)SLang_object_from_mmt (mmt);
+   SLang_MMT_Type *db_mmt, *st_mmt;
 
-   if (check_error(p->db, sqlite3_prepare_v2(p->db, sql, -1, &ppStmt, NULL)))
-     {
-	goto free_return;
-     }
-   if (NULL == (mmt2 = allocate_statement_type (ppStmt)))
-     {
-	(void) SLang_push_null();
-	goto free_return;
-     }
-   if (-1 == SLang_push_mmt (mmt2))
-     {
-	SLang_free_mmt (mmt2);
-	goto free_return;
-     }
+   if (NULL == (p = pop_db (&db_mmt)))
+     return;
 
-free_return:
-   SLang_free_mmt (mmt);
+   (void) prepare_statement (p->db, sql, &st_mmt);
+   SLang_free_mmt (db_mmt);
+
+   if (st_mmt == NULL) return;
+
+   if (-1 == SLang_push_mmt (st_mmt))
+     SLang_free_mmt (st_mmt);
 }
 
 static void slsqlite_get_table (const char *sql)
@@ -426,13 +495,9 @@ static void slsqlite_get_table (const char *sql)
    int nrow, ncolumn;
    char **resultp;
    SLang_Array_Type *at;
-   if (NULL == (mmt = SLang_pop_mmt (DB_Type_Id)))
-     {
-	SLang_free_mmt (mmt);
-	(void) SLang_push_null();
-	return;
-     }
-   p = (db_type *)SLang_object_from_mmt (mmt);
+
+   if (NULL == (p = pop_db (&mmt)))
+     return;
 
    if (check_error(p->db, sqlite3_get_table(p->db, sql, &resultp, &nrow, &ncolumn, NULL)))
      {
@@ -472,11 +537,10 @@ static void slsqlite_get_table (const char *sql)
 
 static void slsqlite_get_row(void)
 {
-   db_type *p;
-   SLang_MMT_Type *mmt;
-   sqlite3_stmt *ppStmt;
+   db_type *db;
+   Statement_Type *st;
+   SLang_MMT_Type *db_mmt, *st_mmt;
    int nargs;
-   char *sql;
 
    nargs = SLang_Num_Function_Args;
 
@@ -488,40 +552,18 @@ static void slsqlite_get_row(void)
      }
 
    SLreverse_stack(nargs);
-   if (NULL == (mmt = SLang_pop_mmt (DB_Type_Id)))
-     {
-	SLang_free_mmt (mmt);
-	return;
-     }
-   p = (db_type *)SLang_object_from_mmt (mmt);
 
-   if (-1 == SLang_pop_slstring(&sql))
+   if (NULL == (db = pop_db_and_statement (&st, &db_mmt, &st_mmt)))
+     return;
+
+   if (0 == do_sqlite_bind(db->db, st->ppStmt, nargs - 2, 1))
      {
-	SLang_verror(SL_Usage_Error, "usage: sqlite_get_row(Sqlite db, String sql, ...)");
-	SLang_free_mmt(mmt);
-	return;
+	if (-1 == do_sqlite_step(db->db, st->ppStmt))
+	  SLang_verror (Sqlite_Error, "Query returned no result");
      }
 
-   if (check_error(p->db, sqlite3_prepare_v2(p->db, sql, -1, &ppStmt, NULL)))
-     {
-	goto free_return;
-     }
-
-   if (do_sqlite_bind(p->db, ppStmt, nargs - 2, 1))
-     {
-	sqlite3_finalize(ppStmt);
-	goto free_return;
-     }
-
-   if (-1 == do_sqlite_step(p->db, ppStmt))
-     SLang_verror (Sqlite_Error, "Query returned no result");
-
-   check_error(p->db, sqlite3_finalize (ppStmt));
-
-free_return:
-   SLang_free_slstring(sql);
-   SLang_free_mmt(mmt);
-
+   SLang_free_mmt (st_mmt);
+   SLang_free_mmt (db_mmt);
 }
 
 /*{{{ sqlite_get_array */
@@ -735,11 +777,10 @@ return_error:
 
 static void slsqlite_get_array(void)
 {
-   db_type *p;
-   SLang_MMT_Type *mmt;
-   sqlite3_stmt *ppStmt;
+   db_type *db;
+   Statement_Type *st;
+   SLang_MMT_Type *db_mmt, *st_mmt;
    int nargs;
-   char *sql;
    SLtype type;
 
    nargs = SLang_Num_Function_Args;
@@ -751,24 +792,20 @@ static void slsqlite_get_array(void)
 	return;
      }
 
-   SLreverse_stack(nargs);
+   /* Stack: dn, dt, st, arg1, ..., argN */
+   if (-1 == SLreverse_stack(nargs)) return;
 
-   if (NULL == (mmt = SLang_pop_mmt (DB_Type_Id)))
-     {
-	SLang_free_mmt (mmt);
-	return;
-     }
-   p = (db_type *)SLang_object_from_mmt (mmt);
+   /* Stack: argN, ..., arg1, st, dr, db */
+   if (-1 == SLstack_exch (1, 2)) return;
 
-   nargs--;
+   /* Stack: argN, ..., arg1, dr, st, db */
+   if (NULL == (db = pop_db_and_statement (&st, &db_mmt, &st_mmt)))
+     return;
+   nargs -= 2;
 
    if (-1 == SLang_pop_datatype (&type))
-     {
-	SLang_verror(SL_Application_Error, "error in sqlite_get_array");
-	SLang_free_mmt (mmt);
-	SLdo_pop_n(nargs);
-	return;
-     }
+     goto free_and_return;
+   nargs--;
 
    switch(type)
      {
@@ -781,102 +818,66 @@ static void slsqlite_get_array(void)
       case SLANG_BSTRING_TYPE:
 	break;
       default:
-	SLdo_pop_n (nargs - 1);
 	SLang_verror(SL_Usage_Error, "only Integer, Double, String and Bstring types allowed");
-	return;
+	goto free_and_return;
      }
 
-   if (-1 == SLang_pop_slstring(&sql))
-     {
-	SLang_verror(SL_Usage_Error, "usage: sqlite_get_array(type, Sqlite db, String sql, ...)");
-	SLang_free_mmt(mmt);
-	return;
-     }
-
-   if (check_error(p->db, sqlite3_prepare_v2(p->db, sql, -1, &ppStmt, NULL)))
-     {
-	goto free_return;
-     }
-
-   if (do_sqlite_bind(p->db, ppStmt, nargs - 2, 1))
-     {
-	sqlite3_finalize(ppStmt);
-	goto free_return;
-     }
+   if (-1 == do_sqlite_bind(db->db, st->ppStmt, nargs, 1))
+     goto free_and_return;
 
    switch(type)
      {
       case SLANG_INT_TYPE:
-	sqlite_get_integer_array(ppStmt); break;
+	sqlite_get_integer_array(st->ppStmt); break;
       case SLANG_DOUBLE_TYPE:
-	sqlite_get_double_array(ppStmt); break;
+	sqlite_get_double_array(st->ppStmt); break;
 #ifdef HAVE_LONG_LONG
       case SLANG_LLONG_TYPE:
-	sqlite_get_llong_array(ppStmt); break;
+	sqlite_get_llong_array(st->ppStmt); break;
 #endif
       case SLANG_STRING_TYPE:
-	sqlite_get_string_array(ppStmt); break;
+	sqlite_get_string_array(st->ppStmt); break;
       case SLANG_BSTRING_TYPE:
-	sqlite_get_bstring_array(ppStmt); break;
+	sqlite_get_bstring_array(st->ppStmt); break;
      }
-free_return:
-   check_error(p->db, sqlite3_finalize (ppStmt));
+   /* drop */
 
-   SLang_free_slstring(sql);
-   SLang_free_mmt(mmt);
+free_and_return:
+   SLang_free_mmt(st_mmt);
+   SLang_free_mmt(db_mmt);
 }
 
 /*}}}*/
 
 static void slsqlite_exec(void)
 {
-   db_type *p;
-   SLang_MMT_Type *mmt;
-   sqlite3_stmt *ppStmt;
+   db_type *db;
+   Statement_Type *st;
+   SLang_MMT_Type *db_mmt, *st_mmt;
    int nargs;
-   char *sql;
 
    nargs = SLang_Num_Function_Args;
 
    if (nargs < 2)
      {
        (void) SLdo_pop_n (nargs);
-	SLang_verror(SL_Usage_Error, "usage: sqlite_exec(Sqlite db, String sql, ...)");
+	SLang_verror(SL_Usage_Error, "usage: sqlite_exec(Sqlite db, String sql|, ...)");
 	return;
      }
 
-   SLreverse_stack(nargs);
-   if (NULL == (mmt = SLang_pop_mmt (DB_Type_Id)))
+   if (-1 == SLreverse_stack(nargs)) return;
+
+   if (NULL == (db = pop_db_and_statement (&st, &db_mmt, &st_mmt)))
      return;
 
-   p = (db_type *)SLang_object_from_mmt (mmt);
-
-   if (-1 == SLang_pop_slstring(&sql))
+   if (0 == do_sqlite_bind(db->db, st->ppStmt, nargs - 2, 1))
      {
-	SLang_verror(SL_Usage_Error, "usage: sqlite_get_row(Sqlite db, String sql, ...)");
-	SLang_free_mmt(mmt);
-	return;
+	if (0 == check_error(db->db, sqlite3_step(st->ppStmt)))
+	  (void) check_error (db->db, sqlite3_reset (st->ppStmt));
      }
 
-   if (check_error(p->db, sqlite3_prepare_v2(p->db, sql, -1, &ppStmt, NULL)))
-     {
-	goto free_return;
-     }
-
-   if (do_sqlite_bind(p->db, ppStmt, nargs - 2, 1))
-     {
-	sqlite3_finalize(ppStmt);
-	goto free_return;
-     }
-
-   if (check_error(p->db, sqlite3_step(ppStmt)))
-     sqlite3_finalize(ppStmt);
-   else
-     check_error(p->db, sqlite3_finalize (ppStmt));
-
-free_return:
-   SLang_free_slstring(sql);
-   SLang_free_mmt(mmt);
+   SLang_free_mmt (st_mmt);
+   SLang_free_mmt (db_mmt);
 }
 
 static int slsqlite_changes (void)
@@ -884,12 +885,10 @@ static int slsqlite_changes (void)
    db_type *p;
    SLang_MMT_Type *mmt;
    int res;
-   if (NULL == (mmt = SLang_pop_mmt (DB_Type_Id)))
-     {
-	SLang_free_mmt (mmt);
-	return 0;
-     }
-   p = (db_type *)SLang_object_from_mmt (mmt);
+
+   if (NULL == (p = pop_db (&mmt)))
+     return -1;
+
    res = sqlite3_changes(p->db);
    SLang_free_mmt (mmt);
    return res;
