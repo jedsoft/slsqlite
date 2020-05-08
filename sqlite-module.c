@@ -1050,6 +1050,51 @@ static void slsqlite_reset(void)
    SLang_free_mmt(mmt);
 }
 
+static int slsqlite_column_count (void)
+{
+   Statement_Type *p;
+   SLang_MMT_Type *mmt;
+   int c;
+
+   if (NULL == (p = pop_statement (&mmt)))
+     return -1;
+
+   c = sqlite3_column_count (p->ppStmt);
+   SLang_free_mmt (mmt);
+   return c;
+}
+
+static int slsqlite_data_count (void)
+{
+   Statement_Type *p;
+   SLang_MMT_Type *mmt;
+   int c;
+
+   if (NULL == (p = pop_statement (&mmt)))
+     return -1;
+
+   c = sqlite3_data_count (p->ppStmt);
+   SLang_free_mmt (mmt);
+   return c;
+}
+
+static void slsqlite_column_name (int *colp)
+{
+   const char *cname;
+   Statement_Type *s;
+   SLang_MMT_Type *mmt;
+
+   if (NULL == (s = pop_statement (&mmt)))
+     return;
+
+   cname = sqlite3_column_name (s->ppStmt, *colp);
+   (void) SLang_push_string ((char *)cname);   /* NULL ok */
+   /* Don't free cname */
+
+   SLang_free_mmt (mmt);
+}
+
+
 /*}}}*/
 /*{{{ intrinsics */
 
@@ -1068,6 +1113,9 @@ static SLang_Intrin_Fun_Type Module_Intrinsics [] =
    MAKE_INTRINSIC_0("sqlite_step", slsqlite_step, SLANG_INT_TYPE),
    MAKE_INTRINSIC_0("sqlite_fetch", slsqlite_fetch, SLANG_VOID_TYPE),
    MAKE_INTRINSIC_0("sqlite_reset", slsqlite_reset, SLANG_VOID_TYPE),
+   MAKE_INTRINSIC_0("sqlite_data_count", slsqlite_data_count, SLANG_INT_TYPE),
+   MAKE_INTRINSIC_0("sqlite_column_count", slsqlite_column_count, SLANG_INT_TYPE),
+   MAKE_INTRINSIC_1("sqlite_column_name", slsqlite_column_name, SLANG_VOID_TYPE, SLANG_INT_TYPE),
    SLANG_END_INTRIN_FUN_TABLE
 };
 
