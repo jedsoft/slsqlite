@@ -82,12 +82,9 @@ private define fetch (stmt)
    return sqlite_fetch(stmt.stmt);
 }
 
-private define prepare ()
+private define prepare (db, sql)
 {
-   variable db, args;
-   args = __pop_list (_NARGS-1);
-   db = ();
-   variable stmt = sqlite_prepare (db.db, __push_list (args));
+   variable stmt = sqlite_prepare (db.db, sql);
    if (stmt == NULL) return NULL;
    variable s = struct
      {
@@ -103,6 +100,62 @@ private define prepare ()
    return s;
 }
 
+private define read_table ()
+{
+   variable db, args; (db, args) = get_db_and_args (_NARGS);
+   variable stmt = list_pop (args);
+   if (typeof(stmt) == Struct_Type)
+     stmt = stmt.stmt;
+   else
+     stmt = sqlite_prepare (db, stmt);
+
+   if (length (args))
+     sqlite_bind_params (stmt, __push_list(args));
+
+   variable i, ncols = sqlite_column_count (stmt);
+   variable cols = String_Type[ncols];
+   variable data = List_Type[ncols];
+
+   _for i (0, ncols-1, 1)
+     {
+	cols[i] = sqlite_column_name (stmt, i);
+	data[i] = {};
+     }
+
+   while (SQLITE_ROW == sqlite_step (stmt))
+     {
+	sqlite_fetch (stmt);
+
+	_for i (ncols-1, 0, -1)
+	  {
+	     variable v = ();
+	     list_append (data[i], v);
+	  }
+     }
+
+   variable s = @Struct_Type(cols);
+   %if (0 == length (data[0])) return s;
+
+   _for i (0, ncols-1, 1)
+     {
+	set_struct_field (s, cols[i], data[i]);
+     }
+
+   return s;
+}
+
+private define get_table_list (db)
+{
+   variable sql = "select name from sqlite_master where type = 'table'";
+   variable s = db.prepare (sql);
+   variable tbls = {};
+   while (s.step() == SQLITE_ROW)
+     {
+	list_append (tbls, s.fetch());
+     }
+   return tbls;
+}
+
 define sqlite_new (name)
 {
    variable db = sqlite_open (name);
@@ -113,6 +166,8 @@ define sqlite_new (name)
      {
 	db = db,
 	get_table = &get_table,
+	get_table_list = &get_table_list,
+	read_table = &read_table,
 	get_row = &get_row,
 	get_array = &get_array,
 	exec = &exec,
