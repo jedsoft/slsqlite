@@ -403,11 +403,13 @@ static int do_sqlite_bind(sqlite3 *db, sqlite3_stmt *ppStmt, int num, int i)
 
    for (; i <= num; i++)
      {
-	switch (SLang_peek_at_stack())
+	int sltype = SLang_peek_at_stack();
+	switch (sltype)
 	  {
 	     MAP(SLANG_INT_TYPE, int, SLang_pop_int, sqlite3_bind_int);
 	     MAP(SLANG_FLOAT_TYPE, float, SLang_pop_float, sqlite3_bind_double);
 	     MAP(SLANG_DOUBLE_TYPE, double, SLang_pop_double, sqlite3_bind_double);
+	     MAP(SLANG_LONG_TYPE, long, SLang_pop_long, sqlite3_bind_int64);
 #ifdef HAVE_LONG_LONG
 	   case SLANG_UINT_TYPE:
 	       {
@@ -436,9 +438,14 @@ static int do_sqlite_bind(sqlite3 *db, sqlite3_stmt *ppStmt, int num, int i)
 	       }
 	     SLbstring_free(bvalue);
 	     break;
+	   case -1:
+	     SLang_verror (SL_Usage_Error, "Check sql string: Not enough values to bind");
+	     return -1;
+
 	   default:
 	     SLdo_pop_n(num + 1 - i);
-	     SLang_verror(SL_Usage_Error, "attempt to bind unsupported type");
+	     SLang_verror(SL_Usage_Error, "attempt to bind unsupported type %s",
+			 SLclass_get_datatype_name (sltype));
 	     return -1;
 	  }
      }
