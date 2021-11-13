@@ -1,6 +1,6 @@
 # -*- sh -*-
 
-
+@SET_MAKE@
 SHELL = /bin/sh
 
 all:

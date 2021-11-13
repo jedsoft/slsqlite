@@ -12,12 +12,7 @@
 
 SLANG_MODULE(sqlite);
 
-#define MODULE_MAJOR_VERSION	0
-#define MODULE_MINOR_VERSION	5
-#define MODULE_PATCH_LEVEL	1
-static char *Module_Version_String = "0.5.1";
-#define MODULE_VERSION_NUMBER	\
-   (MODULE_MAJOR_VERSION*10000+MODULE_MINOR_VERSION*100+MODULE_PATCH_LEVEL)
+#include "version.h"
 
 /*{{{ sqlite type */
 
@@ -395,8 +390,8 @@ static int do_sqlite_bind(sqlite3 *db, sqlite3_stmt *ppStmt, int num, int i)
  case slangtype:\
    {\
       ctype value;\
-      slangpop(&value);\
-      if(check_error(db, sqlitebind(ppStmt, i, value)))\
+      if ((-1 == slangpop(&value)) \
+	  || check_error(db, sqlitebind(ppStmt, i, value))) \
 	return -1;\
       break;\
    }
@@ -410,7 +405,8 @@ static int do_sqlite_bind(sqlite3 *db, sqlite3_stmt *ppStmt, int num, int i)
 	     MAP(SLANG_FLOAT_TYPE, float, SLang_pop_float, sqlite3_bind_double);
 	     MAP(SLANG_DOUBLE_TYPE, double, SLang_pop_double, sqlite3_bind_double);
 	     MAP(SLANG_LONG_TYPE, long, SLang_pop_long, sqlite3_bind_int64);
-#ifdef HAVE_LONG_LONG
+	     MAP(SLANG_UINT_TYPE, unsigned int, SLang_pop_uint, sqlite3_bind_int64);
+#if 0
 	   case SLANG_UINT_TYPE:
 	       {
 		  unsigned int value;
@@ -419,25 +415,29 @@ static int do_sqlite_bind(sqlite3 *db, sqlite3_stmt *ppStmt, int num, int i)
 		    return -1;
 		  break;
 	       }
+#endif
+#ifdef HAVE_LONG_LONG
 	     MAP(SLANG_LLONG_TYPE, long long, SLang_pop_long_long, sqlite3_bind_int64);
 #endif
 	   case SLANG_STRING_TYPE:
-	     SLang_pop_slstring(&svalue);
-	     if (check_error(db, sqlite3_bind_text(ppStmt, i, svalue,
-                                                  strlen(svalue), slstring_destructor)))
+	     if (-1 == SLang_pop_slstring(&svalue)) return -1;
+
+	     if (check_error(db, sqlite3_bind_text(ppStmt, i, svalue, strlen(svalue), slstring_destructor)))
 	       return -1;
+	     /* Note: slstring_destructor is called even if sqlite3_bind_text fails */
 	     break;
+
 	   case SLANG_BSTRING_TYPE:
-	     SLang_pop_bstring(&bvalue);
+	     if (-1 == SLang_pop_bstring(&bvalue)) return -1;
 	     bptr = SLbstring_get_pointer(bvalue, &bstrlen);
-	     if (check_error(db, sqlite3_bind_blob(ppStmt, i, bptr,
-						   bstrlen, SQLITE_TRANSIENT)))
+	     if (check_error(db, sqlite3_bind_blob(ppStmt, i, bptr, bstrlen, SQLITE_TRANSIENT)))
 	       {
 		  SLbstring_free(bvalue);
 		  return -1;
 	       }
 	     SLbstring_free(bvalue);
 	     break;
+
 	   case -1:
 	     SLang_verror (SL_Usage_Error, "Check sql string: Not enough values to bind");
 	     return -1;
@@ -868,7 +868,7 @@ static void slsqlite_exec(void)
    if (nargs < 2)
      {
        (void) SLdo_pop_n (nargs);
-	SLang_verror(SL_Usage_Error, "usage: sqlite_exec(Sqlite db, String sql|, ...)");
+	SLang_verror(SL_Usage_Error, "usage: sqlite_exec(Sqlite db, String sql|Statement_Type stmt, ...)");
 	return;
      }
 
