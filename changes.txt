@@ -1,3 +1,6 @@
+Changes since v0.6.0
+1. Renamed CHANGES to changes.txt; added src/version.h
+
 Changes since 0.5.0
 1. Fixed uninitialized variable (John E. Davis)
 Changes since 0.4.0
