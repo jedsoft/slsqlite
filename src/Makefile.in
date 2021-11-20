@@ -65,7 +65,7 @@ all: $(MODULES)
 # Put Rules to create the modules here
 #---------------------------------------------------------------------------
 sqlite-module.so: sqlite-module.c version.h
-	$(CC_SHARED) $(INCS) sqlite-module.c -o sqlite-module.so $(LIBS)
+	$(CC_SHARED) $(INCS) $(LDFLAGS) sqlite-module.c -o sqlite-module.so $(LIBS)
 version.h: ../changes.txt
 	if [ -x $(UPDATE_VERSION_SCRIPT) ]; then \
 	  $(UPDATE_VERSION_SCRIPT) ../changes.txt ./version.h; \
